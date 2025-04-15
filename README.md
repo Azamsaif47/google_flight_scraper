@@ -1,58 +1,48 @@
-# Google Flight Price Scraper ✈️
+# ✈️ Airports Flight Duration API
 
-This repository contains a Python-based scraper designed to track and extract flight prices from Google Flights. By leveraging the power of Playwright and proxy rotation, the scraper automates the process of fetching flight details such as prices, departure times, and more, saving the data into a CSV file for easy analysis.
+A Fast Api that gives you the one way flight duration of specific route and the roundtrip flight duration of that specific route
 
-## 📖 Tutorial Reference
-
-This project is based on the tutorial published on Rayobyte's community blog and video tutorial:
-
-- [**Step-by-Step Guide: Create a Flight Price Tracker**](https://rayobyte.com/community/scraping-project/create-a-flight-price-tracker-scraping-airlines-ticket-prices-from-google-flights-using-python/)
-- [**YouTube Video Tutorial**](https://youtu.be/8LZXeI7_OxE)
-
-Refer to the tutorial for a detailed explanation of how the scraper works, setup instructions, and customization tips.
+---
 
 ## 🚀 Features
 
-- **Automated Flight Price Tracking**: Scrapes flight details (e.g., price, time) from Google Flights based on user-defined search criteria.
-- **Dynamic Proxy Rotation**: Integrates proxy services for seamless and anonymous scraping.
-- **Data Storage**: Saves flight details to a CSV file for easy tracking and analysis.
+- Retrieve a 2 objects 
+1. one way flight duration time.
+2. roundtrip flight duration time.
 
-## 🛠️ Setup
+---
 
-1. Clone this repository:
+## 🛠️ Installation
+
+1. **Clone the repository:**
+
    ```bash
-   git clone https://github.com/ainacodes/google_flight_scraper.git
+   git clone https://github.com/Azamsaif47/google_flight_scraper.git
+   ```
+
+2. **Navigate to the project directory:**
+
+   ```bash
    cd google_flight_scraper
    ```
-2. Install the required dependencies:
-3. [Optional] Configure proxy rotation: Update the proxy settings in the script if needed in `.env` file.
 
-## 📝 Usage
+3. **Run with Docker Compose:**
 
-1. Modify the [airport codes](https://en.wikipedia.org/wiki/List_of_airports_by_IATA_airport_code:_A) for `departure` and `destination` and also `departure_date`.
-
-   ```
-   if __name__ == "__main__":
-   one_way_url = FlightURLBuilder.build_url(
-       departure="SFO",
-       destination="LAX",
-       departure_date="2024-12-25"
-   )
-   print("One-way URL:", one_way_url)
-
-   # Run the scraper
-   asyncio.run(scrape_flight_data(one_way_url))
+   ```bash
+   docker-compose up
    ```
 
-2. Run the scraper
-   ```
-   python flight_scraper.py
-   ```
+---
 
-## 🧑‍💻 Contributions
+## 📡 Usage
 
-Contributions are welcome! Feel free to fork this repository and submit pull requests for improvements or new features.
-
-## 📧 Contact
-
-For inquiries or suggestions, you can reach me on noraina.nordin16@gmail.com or open a [new issue](https://github.com/ainacodes/google_flight_scraper/issues/new)
+1. Ensure the project is running.
+2. Open your browser and go to:  
+   [http://localhost:8000/docs](http://localhost:5000/docs)
+3. Test the available API endpoint:
+   - `GET /airports` – List all airports
+   - `GET /airport/{iataCode}` – Get details for a specific airport
+   - `GET /distance/from={from}&to={to}` – Calculate distance between two airports
+4. Use the **"Try it out"** button on Swagger to interact with each endpoint.
+5. Input 3-letter **IATA codes** (e.g., `JFK`, `LAX`) as parameters.
+6. Click **Execute** to get the distance result in the **Response Body**.
