@@ -38,13 +38,15 @@ class FlightURLBuilder:
 
 def _setup_browser():
     options = Options()
-    options.add_argument("--headless")
+    options.add_argument("--headless=new")  # Updated headless argument
     options.add_argument("--no-sandbox")
     options.add_argument("--disable-dev-shm-usage")
+    options.add_argument("--disable-gpu")  # Important for Docker
+    options.add_argument("--window-size=1920,1080")  # Set window size
+    options.binary_location = "/usr/bin/google-chrome"  # Specify Chrome path in Docker
     
-    # Use webdriver_manager to handle driver installation
-    service = Service(ChromeDriverManager().install())
-    driver = webdriver.Chrome(service=service, options=options)
+    # Use direct path in Docker instead of ChromeDriverManager
+    driver = webdriver.Chrome(options=options)
     
     return driver
 
