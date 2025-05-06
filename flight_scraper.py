@@ -2,7 +2,7 @@ import asyncio
 import base64
 import json
 import re
-from typing import Dict, Optional
+from typing import Dict, List, Optional
 from selenium import webdriver
 from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.chrome.options import Options
@@ -36,21 +36,18 @@ class FlightURLBuilder:
         modified_str = cls._modify_base64(base64_str)
         return f'https://www.google.com/travel/flights/search?tfs={modified_str}'
 
+
 def _setup_browser():
     options = Options()
-    options.add_argument("--headless=new")  # Updated headless argument
-    options.add_argument("--no-sandbox")
-    options.add_argument("--disable-dev-shm-usage")
-    options.add_argument("--disable-gpu")  # Important for Docker
-    options.add_argument("--window-size=1920,1080")  # Set window size
-    options.binary_location = "/usr/bin/google-chrome"  # Specify Chrome path in Docker
-    
-    # Use direct path in Docker instead of ChromeDriverManager
-    driver = webdriver.Chrome(options=options)
-    
+    options.add_argument("--headless")  # Run in headless mode
+    options.add_argument("--window-size=1920,1080")
+    # Initialize Chrome webdriver via ChromeDriverManager
+    service = Service(ChromeDriverManager().install())
+    driver = webdriver.Chrome(service=service, options=options)
     return driver
 
-def _extract_text(driver, element, selector: str, aria_label: Optional[str] = None) -> str:
+
+def _extract_text(element, selector: str, aria_label: Optional[str] = None) -> str:
     try:
         if aria_label:
             node = element.find_element(By.CSS_SELECTOR, f'{selector}[aria-label*="{aria_label}"]')
@@ -60,16 +57,57 @@ def _extract_text(driver, element, selector: str, aria_label: Optional[str] = No
     except:
         return "N/A"
 
+
+def _extract_text_by_xpath(driver, xpath: str) -> str:
+    try:
+        node = driver.find_element(By.XPATH, xpath)
+        return node.text if node else "N/A"
+    except:
+        return "N/A"
+
+
+def _parse_duration_to_minutes(duration_str: str) -> int:
+    if not duration_str or duration_str == "N/A":
+        return 0
+    hours = int(re.search(r'(\d+)\s*hr', duration_str).group(1)) if re.search(r'(\d+)\s*hr', duration_str) else 0
+    minutes = int(re.search(r'(\d+)\s*min', duration_str).group(1)) if re.search(r'(\d+)\s*min', duration_str) else 0
+    return hours * 60 + minutes
+
+
+def _format_duration(minutes: int) -> str:
+    if minutes == 0:
+        return "N/A"
+    hours = minutes // 60
+    mins = minutes % 60
+    parts = []
+    if hours:
+        parts.append(f"{hours} hr")
+    if mins:
+        parts.append(f"{mins} min")
+    return ' '.join(parts)
+
+
+def _get_number_of_stops(stops_text: str) -> int:
+    if not stops_text or stops_text.lower().strip() == "n/a":
+        return 999
+    text = stops_text.lower()
+    if "nonstop" in text or text.startswith('0'):
+        return 0
+    nums = re.findall(r'\d+', text)
+    return int(nums[0]) if nums else 999
+
+
 def _scrape_flight_info(driver, flight) -> Dict[str, str]:
-    departure_time = _extract_text(driver, flight, 'span', "Departure time")
-    arrival_time = _extract_text(driver, flight, 'span', "Arrival time")
-    airline = _extract_text(driver, flight, ".sSHqwe")
-    duration = _extract_text(driver, flight, "div.gvkrdb")
-    stops = _extract_text(driver, flight, "div.EfT7Ae span.ogfYpf")
-    price = _extract_text(driver, flight, "div.FpEdX span")
-    co2 = _extract_text(driver, flight, "div.O7CXue")
-    var = _extract_text(driver, flight, "div.N6PNV")
-    
+    departure_time = _extract_text(flight, 'span', "Departure time")
+    arrival_time = _extract_text(flight, 'span', "Arrival time")
+    airline = _extract_text(flight, ".sSHqwe")
+    duration = _extract_text(flight, "div.gvkrdb")
+    if duration == "N/A":
+        duration = _extract_text(flight, "div[role='cell'] > div > div > div")
+    stops = _extract_text(flight, "div.EfT7Ae span.ogfYpf")
+    price = _extract_text(flight, "div.FpEdX span")
+    co2 = _extract_text(flight, "div.O7CXue")
+    var = _extract_text(flight, "div.N6PNV")
     return {
         "Departure Time": departure_time,
         "Arrival Time": arrival_time,
@@ -81,88 +119,77 @@ def _scrape_flight_info(driver, flight) -> Dict[str, str]:
         "emissions variation": var
     }
 
-def _calculate_roundtrip_duration(one_way_duration: str) -> str:
-    """
-    Calculate the roundtrip duration by doubling the one-way duration.
-    Input format could be like "1 hr 25 min" or "2 hr" or "45 min"
-    """
-    if one_way_duration == "N/A" or not one_way_duration:
-        return "N/A"
-    
-    # Extract hours and minutes using regex
-    hours_match = re.search(r'(\d+)\s*hr', one_way_duration)
-    minutes_match = re.search(r'(\d+)\s*min', one_way_duration)
-    
-    hours = int(hours_match.group(1)) if hours_match else 0
-    minutes = int(minutes_match.group(1)) if minutes_match else 0
-    
-    # Calculate total minutes for roundtrip
-    total_minutes = 2 * (hours * 60 + minutes)
-    
-    # Convert back to hr/min format
-    roundtrip_hours = total_minutes // 60
-    roundtrip_minutes = total_minutes % 60
-    
-    # Format the result
-    result = ""
-    if roundtrip_hours > 0:
-        result += f"{roundtrip_hours} hr"
-    if roundtrip_minutes > 0:
-        if result:
-            result += " "
-        result += f"{roundtrip_minutes} min"
-    
-    return result if result else "N/A"
 
-def _fetch_first_nonstop(departure: str, destination: str, date: str) -> Dict[str, Optional[str]]:
+def _extract_flight_duration_directly(driver, idx: int = 1) -> str:
+    xpath = (f"/html/body/c-wiz[2]/div/div[2]/c-wiz/div[1]/c-wiz/div[2]/div[2]/div[3]/"
+             f"ul/li[{idx}]/div/div[2]/div[1]/div[1]/div[1]/div[1]")
+    return _extract_text_by_xpath(driver, xpath)
+
+
+def _calculate_roundtrip_duration(one_way: str) -> str:
+    mins = _parse_duration_to_minutes(one_way)
+    return _format_duration(mins * 2)
+
+
+def _fetch_best_flight(departure: str, destination: str, date: str) -> Dict[str, Optional[str]]:
     driver = _setup_browser()
     try:
         url = FlightURLBuilder.build_url(departure, destination, date)
         driver.get(url)
-        
-        # Wait for flights to load
         WebDriverWait(driver, 30).until(
             EC.presence_of_element_located((By.CSS_SELECTOR, ".pIav2d"))
         )
-        
         flights = driver.find_elements(By.CSS_SELECTOR, ".pIav2d")
-        
+        # Look for nonstop
         for flight in flights:
             info = _scrape_flight_info(driver, flight)
-            stops_text = info["Stops"].strip().lower()
-            if "nonstop" in stops_text or stops_text in ("0 stops", "0"):
-                one_way_duration = info["Flight Duration"]
-                roundtrip_duration = _calculate_roundtrip_duration(one_way_duration)
-                return {
-                    "One Way Duration": one_way_duration,
-                    "Roundtrip Duration": roundtrip_duration
-                }
-        
-        return {
-            "One Way Duration": None,
-            "Roundtrip Duration": None
-        }
+            if _get_number_of_stops(info['Stops']) == 0:
+                one = info['Flight Duration']
+                return {"One Way Duration": one, "Roundtrip Duration": _calculate_roundtrip_duration(one), "Stops": "Nonstop"}
+        # Otherwise pick least stops
+        best_idx, min_stops = -1, 999
+        for i, flight in enumerate(flights, 1):
+            stops = _get_number_of_stops(_scrape_flight_info(driver, flight)['Stops'])
+            if stops < min_stops:
+                min_stops, best_idx = stops, i
+        if best_idx > 0:
+            info = _scrape_flight_info(driver, flights[best_idx-1])
+            one = info['Flight Duration'] or _extract_flight_duration_directly(driver, best_idx)
+            return {"One Way Duration": one, "Roundtrip Duration": _calculate_roundtrip_duration(one), "Stops": info['Stops']}
+        return {"One Way Duration": None, "Roundtrip Duration": None, "Stops": None}
     finally:
         driver.quit()
 
-# Create a synchronous version for direct usage
-def run_flight_scraper(departure: str, destination: str, departure_date: str):
+
+def run_flight_scraper(departure: str, destination: str, departure_date: str) -> Dict[str, Optional[str]]:
     """
     Synchronous entry point. Returns flight duration data.
     """
-    return _fetch_first_nonstop(departure, destination, departure_date)
+    return _fetch_best_flight(departure, destination, departure_date)
 
-# Create an async wrapper for FastAPI
-async def run_flight_scraper_async(departure: str, destination: str, departure_date: str):
+
+async def run_flight_scraper_async(departure: str, destination: str, departure_date: str) -> Dict[str, Optional[str]]:
     """
     Asynchronous entry point that wraps the synchronous function in a thread.
     """
     loop = asyncio.get_event_loop()
-    result = await loop.run_in_executor(
-        None, 
-        run_flight_scraper, 
-        departure, 
-        destination, 
+    return await loop.run_in_executor(
+        None,
+        run_flight_scraper,
+        departure,
+        destination,
         departure_date
     )
-    return result
+
+
+def main():
+    """Test the scraper with sample inputs."""
+    departure = "AAR"
+    destination = "CDG"
+    date = "2025-06-01"  # Format: YYYY-MM-DD
+    result = run_flight_scraper(departure, destination, date)
+    print(json.dumps(result, indent=2))
+
+
+if __name__ == "__main__":
+    main()
