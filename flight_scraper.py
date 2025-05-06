@@ -9,7 +9,6 @@ from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
-from webdriver_manager.chrome import ChromeDriverManager
 import time
 
 class FlightURLBuilder:
@@ -38,12 +37,24 @@ class FlightURLBuilder:
 
 
 def _setup_browser():
+    """Set up Chrome browser for Docker environment"""
     options = Options()
-    options.add_argument("--headless")  # Run in headless mode
+    
+    # Required options for running Chrome in Docker
+    options.add_argument("--headless")
+    options.add_argument("--disable-gpu")
+    options.add_argument("--no-sandbox")
+    options.add_argument("--disable-dev-shm-usage")
     options.add_argument("--window-size=1920,1080")
-    # Initialize Chrome webdriver via ChromeDriverManager
-    service = Service(ChromeDriverManager().install())
-    driver = webdriver.Chrome(service=service, options=options)
+    
+    # Set default download location to /tmp
+    options.add_experimental_option("prefs", {
+        "download.default_directory": "/tmp",
+        "download.prompt_for_download": False,
+    })
+
+    # Chrome is installed through the Dockerfile, no need for ChromeDriverManager
+    driver = webdriver.Chrome(options=options)
     return driver
 
 
@@ -136,29 +147,54 @@ def _fetch_best_flight(departure: str, destination: str, date: str) -> Dict[str,
     try:
         url = FlightURLBuilder.build_url(departure, destination, date)
         driver.get(url)
-        WebDriverWait(driver, 30).until(
-            EC.presence_of_element_located((By.CSS_SELECTOR, ".pIav2d"))
-        )
+        
+        # Increased timeout for Docker environment
+        wait = WebDriverWait(driver, 45)
+        try:
+            # Wait for flights to load with a more robust condition
+            wait.until(
+                EC.presence_of_element_located((By.CSS_SELECTOR, ".pIav2d"))
+            )
+        except Exception as e:
+            # Handle timeout more gracefully
+            print(f"Error waiting for page to load: {e}")
+            return {"One Way Duration": None, "Roundtrip Duration": None, "Stops": None, "Error": "Timeout loading flights"}
+            
         flights = driver.find_elements(By.CSS_SELECTOR, ".pIav2d")
+        
+        # Handle case with no flights found
+        if not flights:
+            print("No flights found")
+            return {"One Way Duration": None, "Roundtrip Duration": None, "Stops": None, "Error": "No flights found"}
+            
         # Look for nonstop
         for flight in flights:
             info = _scrape_flight_info(driver, flight)
             if _get_number_of_stops(info['Stops']) == 0:
                 one = info['Flight Duration']
                 return {"One Way Duration": one, "Roundtrip Duration": _calculate_roundtrip_duration(one), "Stops": "Nonstop"}
+        
         # Otherwise pick least stops
         best_idx, min_stops = -1, 999
         for i, flight in enumerate(flights, 1):
             stops = _get_number_of_stops(_scrape_flight_info(driver, flight)['Stops'])
             if stops < min_stops:
                 min_stops, best_idx = stops, i
+                
         if best_idx > 0:
             info = _scrape_flight_info(driver, flights[best_idx-1])
             one = info['Flight Duration'] or _extract_flight_duration_directly(driver, best_idx)
             return {"One Way Duration": one, "Roundtrip Duration": _calculate_roundtrip_duration(one), "Stops": info['Stops']}
-        return {"One Way Duration": None, "Roundtrip Duration": None, "Stops": None}
+            
+        return {"One Way Duration": None, "Roundtrip Duration": None, "Stops": None, "Error": "Could not determine best flight"}
+    except Exception as e:
+        print(f"Unexpected error: {e}")
+        return {"One Way Duration": None, "Roundtrip Duration": None, "Stops": None, "Error": str(e)}
     finally:
-        driver.quit()
+        try:
+            driver.quit()
+        except:
+            pass  # Ignore errors when closing the browser
 
 
 def run_flight_scraper(departure: str, destination: str, departure_date: str) -> Dict[str, Optional[str]]:
@@ -180,16 +216,3 @@ async def run_flight_scraper_async(departure: str, destination: str, departure_d
         destination,
         departure_date
     )
-
-
-def main():
-    """Test the scraper with sample inputs."""
-    departure = "AAR"
-    destination = "CDG"
-    date = "2025-06-01"  # Format: YYYY-MM-DD
-    result = run_flight_scraper(departure, destination, date)
-    print(json.dumps(result, indent=2))
-
-
-if __name__ == "__main__":
-    main()
