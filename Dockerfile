@@ -20,6 +20,21 @@ RUN apt-get update && apt-get install -y \
     xdg-utils \
     fonts-liberation \
     libasound2 \
+    # Dependencies for Playwright
+    libx11-xcb1 \
+    libxcomposite1 \
+    libxcursor1 \
+    libxdamage1 \
+    libxext6 \
+    libxfixes3 \
+    libxi6 \
+    libxrandr2 \
+    libxrender1 \
+    libatspi2.0-0 \
+    libdrm2 \
+    libgbm1 \
+    libwayland-client0 \
+    # Clean up
     && rm -rf /var/lib/apt/lists/*
 
 # Install Chrome
@@ -33,9 +48,15 @@ RUN wget -q -O - https://dl-ssl.google.com/linux/linux_signing_key.pub | apt-key
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
+# Install Playwright browsers
+RUN pip install playwright && \
+    playwright install chromium && \
+    playwright install-deps
+
 # Copy application files
 COPY flight_scraper.py .
 COPY main.py .
+COPY new_check.py .
 COPY .gitignore .
 COPY README.md .
 
