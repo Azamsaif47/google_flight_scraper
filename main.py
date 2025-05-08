@@ -1,11 +1,11 @@
 from fastapi import FastAPI, Query, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
 from flight_scraper import run_flight_scraper_async
-import json
+from new_check import get_highest_price
 
 app = FastAPI(
-    title="Airports Flight Duration API",
-    description="API to get flight duration information for specific routes",
+    title="Flight Information API",
+    description="API to get flight duration and price information for specific routes",
     version="1.0.0"
 )
 
@@ -18,8 +18,8 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-@app.get("/flights")
-async def get_flights(
+@app.get("/flights/duration")
+async def get_flights_duration(
     origin: str = Query(..., description="Origin airport code (e.g., LAX)"),
     destination: str = Query(..., description="Destination airport code (e.g., JFK)"),
     date: str = Query(..., description="Flight date in YYYY-MM-DD format (e.g., 2025-05-20)")
@@ -73,3 +73,55 @@ async def get_flights(
         )
     
     return result
+
+@app.get("/flights/prices")
+async def get_flight_prices(
+    departure: str = Query(..., description="Departure airport code (e.g., LAX)"),
+    arrival: str = Query(..., description="Arrival airport code (e.g., JFK)"),
+    month: str = Query(..., description="Month for price check (e.g., May)")
+):
+    """
+    Retrieve the highest flight price for a specific route during a given month.
+    """
+    # Input validation - similar to the duration endpoint
+    if len(departure) != 3 or not departure.isalpha():
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Departure must be a valid 3-letter airport code"
+        )
+    
+    if len(arrival) != 3 or not arrival.isalpha():
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Arrival must be a valid 3-letter airport code"
+        )
+    
+    try:
+        price = await get_highest_price(
+            departure=departure.upper(),
+            arrival=arrival.upper(),
+            target_month=month,
+            headless=True  # Set to False for debugging
+        )
+        
+        if price > 0:
+            return {
+                "departure": departure.upper(),
+                "arrival": arrival.upper(),
+                "month": month,
+                "highest_price": price
+            }
+        else:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND, 
+                detail="Could not find price data"
+            )
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error fetching flight price information: {str(e)}"
+        )
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=8000)
