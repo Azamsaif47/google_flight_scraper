@@ -109,32 +109,40 @@ def _get_number_of_stops(stops_text: str) -> int:
 
 
 def _scrape_flight_info(driver, flight) -> Dict[str, str]:
-    departure_time = _extract_text(flight, 'span', "Departure time")
-    arrival_time = _extract_text(flight, 'span', "Arrival time")
-    airline = _extract_text(flight, ".sSHqwe")
-    duration = _extract_text(flight, "div.gvkrdb")
-    if duration == "N/A":
-        duration = _extract_text(flight, "div[role='cell'] > div > div > div")
-    stops = _extract_text(flight, "div.EfT7Ae span.ogfYpf")
-    price = _extract_text(flight, "div.FpEdX span")
-    co2 = _extract_text(flight, "div.O7CXue")
-    var = _extract_text(flight, "div.N6PNV")
-    return {
-        "Departure Time": departure_time,
-        "Arrival Time": arrival_time,
-        "Airline Company": airline,
-        "Flight Duration": duration,
-        "Stops": stops,
-        "Price": price,
-        "co2 emissions": co2,
-        "emissions variation": var
-    }
-
-
-def _extract_flight_duration_directly(driver, idx: int = 1) -> str:
-    xpath = (f"/html/body/c-wiz[2]/div/div[2]/c-wiz/div[1]/c-wiz/div[2]/div[2]/div[3]/"
-             f"ul/li[{idx}]/div/div[2]/div[1]/div[1]/div[1]/div[1]")
-    return _extract_text_by_xpath(driver, xpath)
+    try:
+        departure_time = _extract_text(flight, 'span', "Departure time")
+        arrival_time = _extract_text(flight, 'span', "Arrival time")
+        airline = _extract_text(flight, ".sSHqwe")
+        duration = _extract_text(flight, "div.gvkrdb")
+        if duration == "N/A":
+            duration = _extract_text(flight, "div[role='cell'] > div > div > div")
+        stops = _extract_text(flight, "div.EfT7Ae span.ogfYpf")
+        price = _extract_text(flight, "div.FpEdX span")
+        co2 = _extract_text(flight, "div.O7CXue")
+        var = _extract_text(flight, "div.N6PNV")
+        
+        return {
+            "Departure Time": departure_time,
+            "Arrival Time": arrival_time,
+            "Airline Company": airline,
+            "Flight Duration": duration,
+            "Stops": stops,
+            "Price": price,
+            "co2 emissions": co2,
+            "emissions variation": var
+        }
+    except Exception as e:
+        print(f"Error in scrape_flight_info: {e}")
+        return {
+            "Departure Time": "N/A",
+            "Arrival Time": "N/A",
+            "Airline Company": "N/A",
+            "Flight Duration": "N/A",
+            "Stops": "N/A",
+            "Price": "N/A",
+            "co2 emissions": "N/A",
+            "emissions variation": "N/A"
+        }
 
 
 def _calculate_roundtrip_duration(one_way: str) -> str:
@@ -148,45 +156,57 @@ def _fetch_best_flight(departure: str, destination: str, date: str) -> Dict[str,
         url = FlightURLBuilder.build_url(departure, destination, date)
         driver.get(url)
         
-        # Increased timeout for Docker environment
-        wait = WebDriverWait(driver, 45)
+        # Increased timeout for better chance of loading
+        wait = WebDriverWait(driver, 60)
+        
+        # Wait for flights to load - same selector for both nonstop and stops
         try:
-            # Wait for flights to load with a more robust condition
-            wait.until(
-                EC.presence_of_element_located((By.CSS_SELECTOR, ".pIav2d"))
-            )
+            wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, ".pIav2d")))
+            # Add a short delay to ensure all content is loaded
+            time.sleep(3)
         except Exception as e:
-            # Handle timeout more gracefully
             print(f"Error waiting for page to load: {e}")
             return {"One Way Duration": None, "Roundtrip Duration": None, "Stops": None, "Error": "Timeout loading flights"}
-            
+        
+        # Get all flights
         flights = driver.find_elements(By.CSS_SELECTOR, ".pIav2d")
         
         # Handle case with no flights found
         if not flights:
             print("No flights found")
             return {"One Way Duration": None, "Roundtrip Duration": None, "Stops": None, "Error": "No flights found"}
-            
-        # Look for nonstop
+        
+        print(f"Found {len(flights)} flights")
+        
+        # First look for nonstop flights
         for flight in flights:
             info = _scrape_flight_info(driver, flight)
             if _get_number_of_stops(info['Stops']) == 0:
-                one = info['Flight Duration']
-                return {"One Way Duration": one, "Roundtrip Duration": _calculate_roundtrip_duration(one), "Stops": "Nonstop"}
+                one_way = info['Flight Duration']
+                if one_way != "N/A":
+                    print(f"Found nonstop flight with duration: {one_way}")
+                    return {"One Way Duration": one_way, "Roundtrip Duration": _calculate_roundtrip_duration(one_way), "Stops": "Nonstop"}
         
-        # Otherwise pick least stops
-        best_idx, min_stops = -1, 999
-        for i, flight in enumerate(flights, 1):
-            stops = _get_number_of_stops(_scrape_flight_info(driver, flight)['Stops'])
-            if stops < min_stops:
-                min_stops, best_idx = stops, i
-                
-        if best_idx > 0:
-            info = _scrape_flight_info(driver, flights[best_idx-1])
-            one = info['Flight Duration'] or _extract_flight_duration_directly(driver, best_idx)
-            return {"One Way Duration": one, "Roundtrip Duration": _calculate_roundtrip_duration(one), "Stops": info['Stops']}
-            
-        return {"One Way Duration": None, "Roundtrip Duration": None, "Stops": None, "Error": "Could not determine best flight"}
+        # If no nonstop flight found, find the flight with the fewest stops
+        best_flight = None
+        min_stops = 999
+        
+        for flight in flights:
+            info = _scrape_flight_info(driver, flight)
+            stops = _get_number_of_stops(info['Stops'])
+            if stops < min_stops and info['Flight Duration'] != "N/A":
+                min_stops = stops
+                best_flight = info
+        
+        if best_flight:
+            one_way = best_flight['Flight Duration']
+            stops_text = best_flight['Stops']
+            print(f"Best flight found: {one_way} with {stops_text}")
+            return {"One Way Duration": one_way, "Roundtrip Duration": _calculate_roundtrip_duration(one_way), "Stops": stops_text}
+        
+        # If we couldn't find a valid flight with duration, return error
+        return {"One Way Duration": None, "Roundtrip Duration": None, "Stops": None, "Error": "Could not find flight duration"}
+        
     except Exception as e:
         print(f"Unexpected error: {e}")
         return {"One Way Duration": None, "Roundtrip Duration": None, "Stops": None, "Error": str(e)}
